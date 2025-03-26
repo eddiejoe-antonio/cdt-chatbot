@@ -4,23 +4,28 @@ import mapboxgl from 'mapbox-gl';
 import { useEffect, useRef, useState } from 'react';
 import { Resource } from '@/lib/resource';
 import ParcelViewer from './ParcelViewer';
+import type { FeatureCollection, Point } from 'geojson';
 
 mapboxgl.accessToken = process.env.NEXT_PUBLIC_MAPBOX_TOKEN!;
 
-interface MapProps {
+export interface MapProps {
   resources: Resource[];
+  visibleLayers: Record<string, boolean>;
+  selectedCensusField: string | null;
 }
 
-export default function MapWithResources({ resources }: MapProps) {
+export default function MapWithResources({
+  resources,
+  visibleLayers,
+  selectedCensusField,
+}: MapProps) {
   const mapContainer = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<mapboxgl.Map | null>(null);
   const [selected, setSelected] = useState<Resource | null>(null);
 
   useEffect(() => {
-    if (!mapContainer.current) return;
-
     const map = new mapboxgl.Map({
-      container: mapContainer.current,
+      container: mapContainer.current!,
       style: 'mapbox://styles/mapbox/streets-v12',
       center: [-74.006, 40.7128],
       zoom: 11,
@@ -29,7 +34,7 @@ export default function MapWithResources({ resources }: MapProps) {
     mapRef.current = map;
 
     map.on('load', () => {
-      const geojson = {
+      const geojson: FeatureCollection<Point> = {
         type: 'FeatureCollection',
         features: resources.map((resource) => ({
           type: 'Feature',
@@ -38,7 +43,7 @@ export default function MapWithResources({ resources }: MapProps) {
           },
           geometry: {
             type: 'Point',
-            coordinates: [-74.006, 40.7128], // Use real coords later
+            coordinates: [-74.006, 40.7128], // Replace with real coords
           },
         })),
       };
@@ -79,6 +84,12 @@ export default function MapWithResources({ resources }: MapProps) {
 
     return () => map.remove();
   }, [resources]);
+
+  // Optional future use:
+  useEffect(() => {
+    console.log('Visible layers:', visibleLayers);
+    console.log('Selected census field:', selectedCensusField);
+  }, [visibleLayers, selectedCensusField]);
 
   return (
     <div className="relative w-full h-full">
