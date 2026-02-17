@@ -10,8 +10,8 @@ const loadResources = () => {
   if (cachedResources) return cachedResources;
   
   try {
-    // Path to CSV in public folder
-    const csvPath = path.join(process.cwd(), 'public', 'converted.csv');
+    // Path to CSV in api/data folder
+    const csvPath = path.join(process.cwd(), 'api', 'data', 'converted.csv');
     const csvText = fs.readFileSync(csvPath, 'utf8');
     const parsed = Papa.parse(csvText, {
       header: true,
@@ -22,6 +22,7 @@ const loadResources = () => {
     return cachedResources;
   } catch (error) {
     console.error('Error loading CSV:', error);
+    console.error('Tried path:', path.join(process.cwd(), 'api', 'data', 'converted.csv'));
     return [];
   }
 };
