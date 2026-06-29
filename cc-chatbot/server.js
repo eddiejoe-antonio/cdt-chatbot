@@ -41,7 +41,8 @@ const haversineMiles = (lat1, lon1, lat2, lon2) => {
 // Free, no API key. Rate-limited to 1 req/sec — fine for this use case.
 
 const geocodeAddress = async (addr, city, state, zip) => {
-  const q = encodeURIComponent(`${addr}, ${city}, ${state} ${zip}`.trim());
+  const parts = [addr, city, `${state} ${zip}`.trim()].filter(Boolean);
+  const q     = encodeURIComponent(parts.join(', '));
   const url = `https://nominatim.openstreetmap.org/search?q=${q}&format=json&limit=1&countrycodes=us`;
   try {
     const res  = await fetch(url, { headers: { 'User-Agent': 'ClarkCountyBroadbandChatbot/1.0' } });
@@ -114,19 +115,29 @@ const stripDirectional = (addr) => {
 
 // ─── Extract address from message ─────────────────────────────────────────────
 
-const ADDR_RE      = /(\d+[\w\s.#-]+?\b(?:STREET|AVENUE|BOULEVARD|DRIVE|ROAD|LANE|COURT|PLACE|CIRCLE|HIGHWAY|PARKWAY|SQUARE|ST|AVE|BLVD|DR|RD|LN|CT|WAY|PL|CIR|HWY|PKWY|LOOP|SQ)\.?)[\s,]+([A-Za-z][A-Za-z\s]+?)[\s,]+\b([A-Za-z]{2})\b(?:[\s,]+(\d{5}))?/i;
-const BARE_ADDR_RE = /(\d+[\w\s.#-]+?\b(?:STREET|AVENUE|BOULEVARD|DRIVE|ROAD|LANE|COURT|PLACE|CIRCLE|HIGHWAY|PARKWAY|SQUARE|ST|AVE|BLVD|DR|RD|LN|CT|WAY|PL|CIR|HWY|PKWY|LOOP|SQ)\.?)\s*$/i;
+const SUFFIX_PAT = '(?:STREET|AVENUE|BOULEVARD|DRIVE|ROAD|LANE|COURT|PLACE|CIRCLE|HIGHWAY|PARKWAY|SQUARE|ST|AVE|BLVD|DR|RD|LN|CT|WAY|PL|CIR|HWY|PKWY|LOOP|SQ)';
+const ADDR_RE          = new RegExp(`(\\d+[\\w\\s.#-]+?\\b${SUFFIX_PAT}\\.?)[\\s,]+([A-Za-z][A-Za-z\\s]+?)[\\s,]+\\b([A-Za-z]{2})\\b(?:[\\s,]+(\\d{5}))?`, 'i');
+const CITY_NO_STATE_RE = new RegExp(`(\\d+[\\w\\s.#-]+?\\b${SUFFIX_PAT}\\.?)[\\s,]+([A-Za-z][A-Za-z\\s]+?)\\s*$`, 'i');
+const BARE_ADDR_RE     = new RegExp(`(\\d+[\\w\\s.#-]+?\\b${SUFFIX_PAT}\\.?)\\s*$`, 'i');
 
 const extractAddress = (text) => {
+  // Full: "123 Main St, Henderson, NV 89002"
   const m = text.match(ADDR_RE);
   if (m) {
     const addr = normalizeAddr(m[1]);
     return { addr, addrAlt: stripDirectional(addr), city: normalizeCity(m[2]), state: m[3].toUpperCase(), zip: m[4] || '' };
   }
+  // Street + city, no state: "123 Main St, Henderson" — assume NV
+  const mc = text.match(CITY_NO_STATE_RE);
+  if (mc) {
+    const addr = normalizeAddr(mc[1]);
+    return { addr, addrAlt: stripDirectional(addr), city: normalizeCity(mc[2]), state: 'NV', zip: '' };
+  }
+  // Street only — search without city filter
   const bare = text.match(BARE_ADDR_RE);
   if (bare) {
     const addr = normalizeAddr(bare[1]);
-    return { addr, addrAlt: stripDirectional(addr), city: 'LAS VEGAS', state: 'NV', zip: '' };
+    return { addr, addrAlt: stripDirectional(addr), city: null, state: 'NV', zip: '' };
   }
   return null;
 };
@@ -145,13 +156,45 @@ const parseCSVLine = (line) => {
   return result;
 };
 
+// ─── Points CSV — use local file if present, else download from S3 ────────────
+
+const POINTS_S3_URL   = 'https://clark-county.s3.us-east-1.amazonaws.com/points.csv';
+const LOCAL_POINTS    = path.join(__dirname, 'public', 'points.csv');
+const TMP_POINTS      = '/tmp/points.csv';
+
+let _pointsPathPromise = null;
+
+const getPointsCSVPath = () => {
+  if (_pointsPathPromise) return _pointsPathPromise;
+  _pointsPathPromise = (async () => {
+    if (fs.existsSync(LOCAL_POINTS)) return LOCAL_POINTS;
+    if (fs.existsSync(TMP_POINTS))   return TMP_POINTS;
+    console.log('[points.csv] Not found locally — downloading from S3…');
+    const res = await fetch(POINTS_S3_URL);
+    if (!res.ok) throw new Error(`S3 fetch failed: ${res.status}`);
+    const { Readable } = require('stream');
+    await new Promise((resolve, reject) => {
+      const writer = fs.createWriteStream(TMP_POINTS);
+      Readable.fromWeb(res.body).pipe(writer);
+      writer.on('finish', resolve);
+      writer.on('error', reject);
+    });
+    console.log('[points.csv] Saved to /tmp/points.csv');
+    return TMP_POINTS;
+  })().catch(err => {
+    _pointsPathPromise = null;
+    throw err;
+  });
+  return _pointsPathPromise;
+};
+
 // ─── Stream-search points.csv ─────────────────────────────────────────────────
 
-const searchPointsCSV = ({ addr, addrAlt, city, state, zip }) =>
-  new Promise((resolve) => {
-    const csvPath = path.join(__dirname, 'public', 'points.csv');
-    if (!fs.existsSync(csvPath)) return resolve(null);
-
+const searchPointsCSV = async ({ addr, addrAlt, city, state, zip }) => {
+  let csvPath;
+  try { csvPath = await getPointsCSVPath(); } catch { return null; }
+  if (!csvPath || !fs.existsSync(csvPath)) return null;
+  return new Promise((resolve) => {
     const rl = readline.createInterface({ input: fs.createReadStream(csvPath), crlfDelay: Infinity });
     let headers = null, found = null, done = false;
 
@@ -171,9 +214,9 @@ const searchPointsCSV = ({ addr, addrAlt, city, state, zip }) =>
       const candidates = [addr, addrAlt].filter(Boolean);
       const addrMatch  = candidates.some(a => rowAddr === a || rowAddr.startsWith(a + ' '));
       const stateMatch = rowState === state;
-      const cityMatch    = rowCity === city;
-      const zipMatch     = zip && rowZip === zip;
-      const locationMatch = (cityMatch && stateMatch) || (zipMatch && stateMatch);
+      const cityMatch     = !city || rowCity === city;
+      const zipMatch      = zip && rowZip === zip;
+      const locationMatch = stateMatch && (cityMatch || zipMatch);
 
       if (addrMatch && locationMatch) {
         found = row; done = true; rl.close();
@@ -183,6 +226,7 @@ const searchPointsCSV = ({ addr, addrAlt, city, state, zip }) =>
     rl.on('close', () => resolve(found));
     rl.on('error', () => resolve(null));
   });
+};
 
 // ─── Match plans by PROVIDER + TECHNOLOGY (both must match) ──────────────────
 // Fix: plan Technology can be "Cable, Fiber to the Premises" — split and check
