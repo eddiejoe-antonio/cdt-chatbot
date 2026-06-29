@@ -350,7 +350,6 @@ If no address is found in the database, say so and suggest checking broadbandmap
 app.post('/api/chat', async (req, res) => {
   try {
     const { messages } = req.body;
-    const userMessage  = messages[messages.length - 1].content;
 
     let contextBlock  = '';
     let planGroups    = null;

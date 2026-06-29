@@ -30,8 +30,8 @@ function MessageContent({ content }) {
   return (
     <div className="space-y-1">
       {lines.map((line, i) => {
-        const isBullet = /^[•\-]\s+/.test(line);
-        const text     = isBullet ? line.replace(/^[•\-]\s+/, '') : line;
+        const isBullet = /^[•-]\s+/.test(line);
+        const text     = isBullet ? line.replace(/^[•-]\s+/, '') : line;
         const renderBold = (str) =>
           str.split(/\*\*(.*?)\*\*/g).map((part, j) =>
             j % 2 === 1 ? <strong key={j} className="font-semibold">{part}</strong> : part

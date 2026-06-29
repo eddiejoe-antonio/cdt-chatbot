@@ -305,7 +305,6 @@ module.exports = async function handler(req, res) {
 
   try {
     const { messages } = req.body;
-    const userMessage  = messages[messages.length - 1].content;
 
     let contextBlock  = '';
     let planGroups    = null;
