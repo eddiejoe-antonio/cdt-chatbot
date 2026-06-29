@@ -356,7 +356,15 @@ app.post('/api/chat', async (req, res) => {
     let planGroups    = null;
     let serviceGroups = null;
 
-    const parsed = extractAddress(userMessage);
+    const parsed = (() => {
+      for (let i = messages.length - 1; i >= 0; i--) {
+        if (messages[i].role === 'user') {
+          const r = extractAddress(messages[i].content);
+          if (r) return r;
+        }
+      }
+      return null;
+    })();
     console.log('[debug] parsed:', JSON.stringify(parsed));
 
     if (parsed) {
