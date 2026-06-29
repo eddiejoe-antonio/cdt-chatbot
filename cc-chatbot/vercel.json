@@ -4,5 +4,10 @@
       "source": "/api/:path*",
       "destination": "/api/:path*"
     }
-  ]
+  ],
+  "functions": {
+    "api/chat.js": {
+      "maxDuration": 60
+    }
+  }
 }

@@ -158,9 +158,9 @@ const parseCSVLine = (line) => {
 
 // ─── Points CSV — use local file if present, else download from S3 ────────────
 
-const POINTS_S3_URL   = 'https://clark-county.s3.us-east-1.amazonaws.com/points.csv';
-const LOCAL_POINTS    = path.join(__dirname, 'public', 'points.csv');
-const TMP_POINTS      = '/tmp/points.csv';
+const POINTS_S3_URL   = 'https://clark-county.s3.us-east-1.amazonaws.com/points.csv.gz';
+const LOCAL_POINTS    = path.join(__dirname, 'public', 'points.csv.gz');
+const TMP_POINTS      = '/tmp/points.csv.gz';
 
 let _pointsPathPromise = null;
 
@@ -195,7 +195,9 @@ const searchPointsCSV = async ({ addr, addrAlt, city, state, zip }) => {
   try { csvPath = await getPointsCSVPath(); } catch { return null; }
   if (!csvPath || !fs.existsSync(csvPath)) return null;
   return new Promise((resolve) => {
-    const rl = readline.createInterface({ input: fs.createReadStream(csvPath), crlfDelay: Infinity });
+    const zlib   = require('zlib');
+    const source = fs.createReadStream(csvPath).pipe(zlib.createGunzip());
+    const rl = readline.createInterface({ input: source, crlfDelay: Infinity });
     let headers = null, found = null, done = false;
 
     rl.on('line', (line) => {
