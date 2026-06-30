@@ -8,7 +8,7 @@ const { SERVICES } = require('../services');
 
 let plansData = [];
 try {
-  const raw = fs.readFileSync(path.join(process.cwd(), 'public', 'plans_with_tech.csv'));
+  const raw = fs.readFileSync(path.join(__dirname, '..', 'public', 'plans_with_tech.csv'));
   plansData  = parse(raw, { columns: true, skip_empty_lines: true, trim: true });
   console.log(`Loaded ${plansData.length} plans`);
 } catch (err) {
