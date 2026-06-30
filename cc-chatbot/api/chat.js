@@ -1,6 +1,5 @@
 // api/chat.js — Vercel serverless function for POST /api/chat
 const fs        = require('fs');
-const readline  = require('readline');
 const path      = require('path');
 const { parse } = require('csv-parse/sync');
 const { SERVICES } = require('../services');
@@ -61,20 +60,6 @@ const getServicesNearAddress = (userLat, userLon) => {
   };
 };
 
-// ─── CSV parsing ──────────────────────────────────────────────────────────────
-
-const parseCSVLine = (line) => {
-  const result = [];
-  let cur = '', inQ = false;
-  for (const ch of line) {
-    if      (ch === '"')         { inQ = !inQ; }
-    else if (ch === ',' && !inQ) { result.push(cur); cur = ''; }
-    else                         { cur += ch; }
-  }
-  result.push(cur);
-  return result;
-};
-
 // ─── Address normalisation ────────────────────────────────────────────────────
 
 const STREET_ABBREVS = {
@@ -129,75 +114,29 @@ const extractAddress = (text) => {
   return null;
 };
 
-// ─── Points CSV — fetch from S3 into /tmp, cache across warm invocations ──────
+// ─── Points DB — Neon Postgres ────────────────────────────────────────────────
 
-const POINTS_S3_URL = 'https://clark-county.s3.us-east-1.amazonaws.com/points.csv.gz';
-const TMP_POINTS    = '/tmp/points.csv.gz';
+const { neon } = require('@neondatabase/serverless');
+const sql = neon(process.env.DATABASE_URL);
 
-let _pointsPathPromise = null;
-
-const getPointsCSVPath = () => {
-  if (_pointsPathPromise) return _pointsPathPromise;
-  _pointsPathPromise = (async () => {
-    if (fs.existsSync(TMP_POINTS)) return TMP_POINTS;
-    console.log('[points.csv] Downloading from S3…');
-    const res = await fetch(POINTS_S3_URL);
-    if (!res.ok) throw new Error(`S3 fetch failed: ${res.status}`);
-    const { Readable } = require('stream');
-    await new Promise((resolve, reject) => {
-      const writer = fs.createWriteStream(TMP_POINTS);
-      Readable.fromWeb(res.body).pipe(writer);
-      writer.on('finish', resolve);
-      writer.on('error', reject);
-    });
-    console.log('[points.csv] Saved to /tmp/points.csv');
-    return TMP_POINTS;
-  })().catch(err => {
-    _pointsPathPromise = null; // allow retry on next request
-    throw err;
-  });
-  return _pointsPathPromise;
-};
-
-// ─── Points CSV stream search ─────────────────────────────────────────────────
-
-const searchPointsCSV = async ({ addr, addrAlt, city, state, zip }) => {
-  let csvPath;
-  try { csvPath = await getPointsCSVPath(); } catch { return null; }
-  if (!csvPath || !fs.existsSync(csvPath)) return null;
-  return new Promise((resolve) => {
-
-    const zlib   = require('zlib');
-    const source = fs.createReadStream(csvPath).pipe(zlib.createGunzip());
-    const rl = readline.createInterface({ input: source, crlfDelay: Infinity });
-    let headers = null, found = null, done = false;
-
-    rl.on('line', (line) => {
-      if (done) return;
-      if (!headers) { headers = parseCSVLine(line).map(h => h.replace(/"/g, '').trim()); return; }
-
-      const scanTarget = addrAlt || addr;
-      if (!line.toUpperCase().includes(scanTarget)) return;
-
-      const values    = parseCSVLine(line);
-      const row       = Object.fromEntries(headers.map((h, i) => [h, (values[i] || '').replace(/"/g, '').trim()]));
-      const rowAddr   = normalizeAddr(row.ADDR);
-      const rowCity   = normalizeCity(row.CITY);
-      const rowState  = (row.STATE || '').toUpperCase();
-      const rowZip    = (row.ZIP  || '').replace(/"/g, '').trim();
-      const candidates    = [addr, addrAlt].filter(Boolean);
-      const addrMatch     = candidates.some(a => rowAddr === a || rowAddr.startsWith(a + ' '));
-      const stateMatch    = rowState === state;
-      const cityMatch     = !city || rowCity === city;
-      const zipMatch      = zip && rowZip === zip;
-      const locationMatch = stateMatch && (cityMatch || zipMatch);
-
-      if (addrMatch && locationMatch) { found = row; done = true; rl.close(); }
-    });
-
-    rl.on('close', () => resolve(found));
-    rl.on('error', () => resolve(null));
-  });
+const searchPoints = async ({ addr, addrAlt, city, state, zip }) => {
+  const candidates = [addr, addrAlt].filter(Boolean);
+  for (const a of candidates) {
+    let rows = city
+      ? await sql`SELECT * FROM points WHERE addr=${a} AND state=${state} AND city=${city} LIMIT 1`
+      : await sql`SELECT * FROM points WHERE addr=${a} AND state=${state} LIMIT 1`;
+    if (!rows.length && zip)
+      rows = await sql`SELECT * FROM points WHERE addr=${a} AND state=${state} AND zip=${zip} LIMIT 1`;
+    if (rows.length) {
+      const r = rows[0];
+      return { ADDR: r.addr, CITY: r.city, STATE: r.state, ZIP: r.zip,
+               BLD_TYPE: r.bld_type, BRANDNAMES: r.brandnames, TECHBEST: r.techbest,
+               TECHRULES: r.techrules, MAX_DL: r.max_dl, MAX_UL: r.max_ul,
+               FIXEDCNT: r.fixedcnt, CSCHOICE: r.cschoice,
+               LATITUDE: r.lat, LONGITUDE: r.long };
+    }
+  }
+  return null;
 };
 
 // ─── Plan matching ────────────────────────────────────────────────────────────
@@ -325,7 +264,7 @@ module.exports = async function handler(req, res) {
 
     if (parsed) {
       const [row, geoResult] = await Promise.all([
-        searchPointsCSV(parsed),
+        searchPoints(parsed),
         geocodeAddress(parsed.addr, parsed.city, parsed.state, parsed.zip),
       ]);
       console.log('[debug] CSV row:', row ? row.ADDR : 'null');
