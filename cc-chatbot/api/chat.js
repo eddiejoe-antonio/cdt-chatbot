@@ -148,7 +148,7 @@ const parseTechRules = (techrules) => {
 
 const matchPlans = (brandnames, techsAtAddress, bldType) => {
   if (!brandnames) return [];
-  const targetServiceType = bldType === 'R' ? 'Residential' : 'Commercial';
+  const targetServiceType = bldType === 'B' ? 'Commercial' : 'Residential';
   const brands = brandnames.split(/;\s*/).map(b => b.trim().toLowerCase()).filter(Boolean);
 
   return plansData
@@ -156,13 +156,13 @@ const matchPlans = (brandnames, techsAtAddress, bldType) => {
       const provider = (plan['Providers'] || '').toLowerCase();
       if (!brands.some(b => provider.includes(b) || b.includes(provider))) return false;
       const serviceTypes = new Set((plan['Service Type'] || '').split(',').map(s => s.trim()));
-      if (!serviceTypes.has(targetServiceType)) return false;
+      if (!serviceTypes.has('Residential') && !serviceTypes.has(targetServiceType)) return false;
       const planTechs = (plan['Technology'] || '').split(',').map(t => t.trim()).filter(Boolean);
       return planTechs.some(t => techsAtAddress.has(t));
     })
     .map(plan => {
-      const dl = parseFloat(plan[' Download Speed (Mbps) ']) || 0;
-      const ul = parseFloat(plan[' Upload Speed (Mbps) '])   || 0;
+      const dl = parseFloat(plan['Download Speed (Mbps)']) || 0;
+      const ul = parseFloat(plan['Upload Speed (Mbps)'])   || 0;
       return {
         planName      : plan['Plan Name']                          || '',
         provider      : plan['Providers']                          || '',
@@ -170,8 +170,8 @@ const matchPlans = (brandnames, techsAtAddress, bldType) => {
         price         : plan['Full Monthly Price']                  || '',
         introDiscount : plan['Intro Discount']                      || '',
         introPeriod   : plan['Intro Period (months)']               || '',
-        downloadMbps  : plan[' Download Speed (Mbps) ']            || '',
-        uploadMbps    : plan[' Upload Speed (Mbps) ']              || '',
+        downloadMbps  : plan['Download Speed (Mbps)']            || '',
+        uploadMbps    : plan['Upload Speed (Mbps)']              || '',
         dataCap       : plan['Data Cap? (Y/N)']                     || '',
         dataCapGB     : plan['Data Cap (GB)']                       || '',
         contract      : plan['Contract Required? (Y/N)']            || '',
@@ -296,7 +296,7 @@ module.exports = async function handler(req, res) {
 
         contextBlock = `\n\n## Data for this query
 ADDRESS: ${row.ADDR}, ${row.CITY}, ${row.STATE} ${row.ZIP}
-Building type: ${row.BLD_TYPE === 'R' ? 'Residential' : 'Commercial'}
+Building type: ${row.BLD_TYPE === 'R' ? 'Residential' : row.BLD_TYPE === 'B' ? 'Business' : 'Other/Unclassified'}
 Providers at this address: ${row.BRANDNAMES}
 Best available technology: ${row.TECHBEST}
 Technologies available: ${[...techsAtAddress].join(', ')}
